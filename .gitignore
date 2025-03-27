@@ -39,3 +39,42 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# 点群エディタ特有のファイル
+# 点群データファイル（必要に応じてサンプルのみ含めることも可能）
+*.pcd
+*.csv
+*.ply
+*.obj
+*.xyz
+/data/
+/samples/
+
+# キャッシュやログファイル
+.cache/
+logs/
+*.log
+
+# IDEやエディタの設定
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.sublime-project
+*.sublime-workspace
+
+# OS固有のファイル
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# 一時ファイル
+*.tmp
+*.bak
+*.swp
+*~
+
+# 大きなバイナリファイル
+*.bin
+*.dat
