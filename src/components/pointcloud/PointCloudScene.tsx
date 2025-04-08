@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useEffect, useCallback, useContext } from 'react';
+import React, { useRef, useEffect, useCallback, useContext, useState } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import { OrbitControls, TransformControls, GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
@@ -41,6 +41,14 @@ export const MapControls = () => {
   );
 };
 
+// 点群の位置・回転情報を追跡するインターフェース
+interface PointCloudTransform {
+  id: string;
+  position: THREE.Vector3;
+  rotation: THREE.Euler;
+  scale: THREE.Vector3;
+}
+
 interface PointCloudSceneProps {
   pointClouds: any[];
   selectedPoints: string[];
@@ -59,10 +67,16 @@ export const PointCloudScene: React.FC<PointCloudSceneProps> = ({
   onSelect,
   pointSize
 }) => {
-  const { scene, camera } = useThree();
+  const { scene, camera, gl } = useThree();
   const transformRef = useRef<any>(null);
   const orbitControlsRef = useRef<OrbitControlsImpl>(null);
   const selectedGroupRef = useRef(new THREE.Group());
+  const pointsRefsMap = useRef<Map<string, THREE.Points>>(new Map());
+  const [transformsChanged, setTransformsChanged] = useState(false);
+  
+  // 点群の変換情報を追跡
+  const [pointCloudTransforms, setPointCloudTransforms] = useState<PointCloudTransform[]>([]);
+  
   const { heightFilterEnabled, heightRange } = useContext(AppContext);
   
   // カメラの初期設定
@@ -74,17 +88,66 @@ export const PointCloudScene: React.FC<PointCloudSceneProps> = ({
     }
   }, [camera]);
   
-  // TransformControlsの設定
+  // TransformControlsのイベント監視
   useEffect(() => {
-    if (transformRef.current && selectedGroupRef.current) {
-      if (activeTransform && selectedPoints.length > 0) {
-        transformRef.current.attach(selectedGroupRef.current);
-        transformRef.current.setMode(activeTransform as "translate" | "rotate" | "scale");
-      } else {
-        transformRef.current.detach();
+    if (!transformRef.current) return;
+    
+    const handleChange = () => {
+      // 選択グループの変換情報を更新
+      if (selectedGroupRef.current) {
+        // 変更フラグを立てる
+        setTransformsChanged(true);
       }
-    }
-  }, [activeTransform, selectedPoints]);
+    };
+    
+    const handleMouseUp = () => {
+      if (selectedGroupRef.current && selectedGroupRef.current.children.length > 0) {
+        // 選択グループ内のすべての点群に対して変換情報を保存
+        const groupPosition = new THREE.Vector3();
+        const groupRotation = new THREE.Euler();
+        const groupScale = new THREE.Vector3();
+        
+        selectedGroupRef.current.getWorldPosition(groupPosition);
+        selectedGroupRef.current.getWorldQuaternion(new THREE.Quaternion());
+        selectedGroupRef.current.getWorldScale(groupScale);
+        
+        // 選択された各点群の変換情報を更新
+        setPointCloudTransforms(prev => {
+          const newTransforms = [...prev];
+          
+          selectedPoints.forEach(id => {
+            const existingIndex = newTransforms.findIndex(t => t.id === id);
+            const newTransform = {
+              id,
+              position: groupPosition.clone(),
+              rotation: groupRotation.clone(),
+              scale: groupScale.clone()
+            };
+            
+            if (existingIndex >= 0) {
+              newTransforms[existingIndex] = newTransform;
+            } else {
+              newTransforms.push(newTransform);
+            }
+          });
+          
+          return newTransforms;
+        });
+      }
+    };
+    
+    transformRef.current.addEventListener('change', handleChange);
+    transformRef.current.addEventListener('mouseUp', handleMouseUp);
+    transformRef.current.addEventListener('objectChange', handleChange);
+    
+    return () => {
+      if (transformRef.current) {
+        transformRef.current.removeEventListener('change', handleChange);
+        transformRef.current.removeEventListener('mouseUp', handleMouseUp);
+        transformRef.current.removeEventListener('objectChange', handleChange);
+      }
+    };
+  }, [transformRef, selectedPoints]);
   
   // 選択グループの更新
   useEffect(() => {
@@ -95,11 +158,26 @@ export const PointCloudScene: React.FC<PointCloudSceneProps> = ({
       selectedGroupRef.current.remove(selectedGroupRef.current.children[0]);
     }
     
-    // 選択された点群をグループに追加
-    scene.children.forEach(child => {
-      if (child.userData && selectedPoints.includes(child.userData.id)) {
-        // 元の点群の参照を保持
-        selectedGroupRef.current.add(child);
+    // 選択された点群を一時的なグループにクローンして追加
+    pointsRefsMap.current.forEach((pointsObj, id) => {
+      if (selectedPoints.includes(id)) {
+        // 既存の変換情報を検索
+        const existingTransform = pointCloudTransforms.find(t => t.id === id);
+        
+        // クローンを作成（メッシュとマテリアルを共有、位置情報はコピー）
+        const clonedPoints = pointsObj.clone();
+        clonedPoints.geometry = pointsObj.geometry;
+        clonedPoints.material = pointsObj.material;
+        
+        // 既存の変換情報があれば適用
+        if (existingTransform) {
+          clonedPoints.position.copy(existingTransform.position);
+          clonedPoints.rotation.copy(existingTransform.rotation);
+          clonedPoints.scale.copy(existingTransform.scale);
+        }
+        
+        // グループにクローンを追加
+        selectedGroupRef.current.add(clonedPoints);
       }
     });
     
@@ -107,7 +185,22 @@ export const PointCloudScene: React.FC<PointCloudSceneProps> = ({
     if (!scene.children.includes(selectedGroupRef.current)) {
       scene.add(selectedGroupRef.current);
     }
-  }, [selectedPoints, scene]);
+  }, [selectedPoints, pointCloudTransforms, transformsChanged]);
+  
+  // 変換コントロールの更新
+  useEffect(() => {
+    if (transformRef.current && selectedGroupRef.current) {
+      if (activeTransform && selectedPoints.length > 0) {
+        transformRef.current.attach(selectedGroupRef.current);
+        transformRef.current.setMode(activeTransform as "translate" | "rotate" | "scale");
+        transformRef.current.showX = true;
+        transformRef.current.showY = true;
+        transformRef.current.showZ = activeTransform === "translate";
+      } else {
+        transformRef.current.detach();
+      }
+    }
+  }, [activeTransform, selectedPoints]);
   
   // 高さフィルター適用
   const applyHeightFilter = useCallback((positions: Float32Array) => {
@@ -128,6 +221,15 @@ export const PointCloudScene: React.FC<PointCloudSceneProps> = ({
     return visibleIndices;
   }, [heightFilterEnabled, heightRange]);
   
+  // アニメーションループで点群の参照を保持
+  useFrame(() => {
+    // レンダラーのアップデートを強制
+    if (transformsChanged) {
+      gl.render(scene, camera);
+      setTransformsChanged(false);
+    }
+  });
+  
   return (
     <>
       {/* 各点群のレンダリング */}
@@ -135,11 +237,25 @@ export const PointCloudScene: React.FC<PointCloudSceneProps> = ({
         // 高さフィルターの適用
         const visibleIndices = applyHeightFilter(pc.data.positions);
         
+        // 変換情報を取得
+        const transform = pointCloudTransforms.find(t => t.id === pc.id);
+        
         return (
           <points
             key={pc.id}
             userData={{ id: pc.id }}
             onClick={() => onSelect(pc.id)}
+            // 保存されている変換情報を適用
+            position={transform ? [transform.position.x, transform.position.y, transform.position.z] : [0, 0, 0]}
+            rotation={transform ? [transform.rotation.x, transform.rotation.y, transform.rotation.z] : [0, 0, 0]}
+            scale={transform ? [transform.scale.x, transform.scale.y, transform.scale.z] : [1, 1, 1]}
+            ref={(el) => {
+              if (el) {
+                pointsRefsMap.current.set(pc.id, el);
+              } else {
+                pointsRefsMap.current.delete(pc.id);
+              }
+            }}
           >
             <bufferGeometry>
               <bufferAttribute
