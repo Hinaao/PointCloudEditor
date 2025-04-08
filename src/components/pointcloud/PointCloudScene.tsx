@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useEffect, useCallback, useContext, useState } from 'react';
+import React, { useRef, useEffect, useCallback, useContext, useState, useMemo } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import { OrbitControls, TransformControls, GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
@@ -27,6 +27,7 @@ export const MapControls = () => {
     
     // コントロールの設定は参照があるときのみ
     if (controlsRef.current) {
+      controlsRef.current.zoomSpeed = 0.3; // ズーム速度を小さく調整
       controlsRef.current.enableRotate = false;
       controlsRef.current.screenSpacePanning = true;
     }
@@ -36,6 +37,7 @@ export const MapControls = () => {
     <OrbitControls 
       ref={controlsRef} 
       makeDefault
+      zoomSpeed={0.3} // ズーム速度を小さく調整
       enableDamping={false}
     />
   );
@@ -57,6 +59,74 @@ interface PointCloudSceneProps {
   onSelect: (id: string) => void;
   pointSize: number;
 }
+
+// バウンディングボックスコンポーネント
+interface BoundingBoxProps {
+  pointCloud: any;
+  transform: PointCloudTransform | undefined;
+  color?: string;
+}
+
+const PointCloudBoundingBox: React.FC<BoundingBoxProps> = ({ pointCloud, transform, color = '#00ff00' }) => {
+  // 点群からバウンディングボックスを計算
+  const { size, center } = useMemo(() => {
+    const positions = pointCloud.data.positions;
+    const count = positions.length / 3;
+    
+    // 初期値設定
+    let minX = Infinity, minY = Infinity, minZ = Infinity;
+    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+    
+    // すべての点を走査してmin/maxを求める
+    for (let i = 0; i < count; i++) {
+      const x = positions[i * 3];
+      const y = positions[i * 3 + 1];
+      const z = positions[i * 3 + 2];
+      
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      minZ = Math.min(minZ, z);
+      
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+      maxZ = Math.max(maxZ, z);
+    }
+    
+    // サイズと中心を計算
+    const size = new THREE.Vector3(
+      Math.abs(maxX - minX),
+      Math.abs(maxY - minY),
+      Math.abs(maxZ - minZ)
+    );
+    
+    const center = new THREE.Vector3(
+      (minX + maxX) / 2,
+      (minY + maxY) / 2,
+      (minZ + maxZ) / 2
+    );
+    
+    return { size, center };
+  }, [pointCloud.data.positions]);
+  
+  // バウンディングボックスのレンダリング
+  return (
+    <mesh
+      position={transform ? [
+        transform.position.x + center.x,
+        transform.position.y + center.y,
+        transform.position.z + center.z
+      ] : [center.x, center.y, center.z]}
+      rotation={transform ? [
+        transform.rotation.x,
+        transform.rotation.y,
+        transform.rotation.z
+      ] : [0, 0, 0]}
+    >
+      <boxGeometry args={[size.x, size.y, size.z]} />
+      <meshBasicMaterial wireframe color={color} transparent opacity={0.5} />
+    </mesh>
+  );
+};
 
 // 3Dシーンコンポーネント
 export const PointCloudScene: React.FC<PointCloudSceneProps> = ({ 
@@ -291,6 +361,19 @@ export const PointCloudScene: React.FC<PointCloudSceneProps> = ({
         );
       })}
       
+      {/* バウンディングボックスの表示 */}
+      {pointClouds.filter(pc => pc.visible && selectedPoints.includes(pc.id)).map(pc => {
+        const transform = pointCloudTransforms.find(t => t.id === pc.id);
+        return (
+          <PointCloudBoundingBox 
+            key={`bbox-${pc.id}`} 
+            pointCloud={pc} 
+            transform={transform} 
+            color="#00ff88"
+          />
+        );
+      })}
+      
       {/* 変換コントロール（編集モード時のみ） */}
       {editMode && activeTransform && (
         <TransformControls
@@ -322,6 +405,7 @@ export const PointCloudScene: React.FC<PointCloudSceneProps> = ({
           ref={orbitControlsRef}
           makeDefault
           enableDamping={false}
+          zoomSpeed={0.3} // ズーム速度を小さく調整
           minPolarAngle={0}
           maxPolarAngle={Math.PI}
         />
