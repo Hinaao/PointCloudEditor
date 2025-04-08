@@ -304,15 +304,14 @@ export const PointCloudScene: React.FC<PointCloudSceneProps> = ({
     <>
       {/* 各点群のレンダリング */}
       {pointClouds.filter(pc => pc.visible).map(pc => {
-        // 選択されている点群はレンダリングしない（選択グループ内のクローンのみ表示）
-        if (selectedPoints.includes(pc.id) && editMode && activeTransform) {
-          return null;
-        }
         // 高さフィルターの適用
         const visibleIndices = applyHeightFilter(pc.data.positions);
         
         // 変換情報を取得
         const transform = pointCloudTransforms.find(t => t.id === pc.id);
+        
+        // 選択されている点群は表示しないが、参照は登録する
+        const isSelectedInEditMode = selectedPoints.includes(pc.id) && editMode && activeTransform;
         
         return (
           <points
@@ -330,6 +329,7 @@ export const PointCloudScene: React.FC<PointCloudSceneProps> = ({
                 pointsRefsMap.current.delete(pc.id);
               }
             }}
+            visible={!isSelectedInEditMode} // 選択中の点群は非表示にするが、参照は維持
           >
             <bufferGeometry>
               <bufferAttribute
