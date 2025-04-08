@@ -304,6 +304,10 @@ export const PointCloudScene: React.FC<PointCloudSceneProps> = ({
     <>
       {/* 各点群のレンダリング */}
       {pointClouds.filter(pc => pc.visible).map(pc => {
+        // 選択されている点群はレンダリングしない（選択グループ内のクローンのみ表示）
+        if (selectedPoints.includes(pc.id) && editMode && activeTransform) {
+          return null;
+        }
         // 高さフィルターの適用
         const visibleIndices = applyHeightFilter(pc.data.positions);
         
